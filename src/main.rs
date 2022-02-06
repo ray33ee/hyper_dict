@@ -11,11 +11,12 @@ use ndarray::{Array2, Array, Axis, Array1, Zip};
 use ndarray::Slice;
 
 use lair::decomposition::lu::Factorized;
+use std::hash::Hash;
 
 ///Enum representing reason for thread termination
 enum ThreadResult {
     /// A constant has been found, with the supplied value
-    Found(u64),
+    Found((u64, Vec<i64>)),
 
     /// A thread has finished its search, and no constant was found
     NotFound,
@@ -178,53 +179,11 @@ fn large_n_scheme(keys: & Vec<u64>) -> (u64, Vec<i64>) {
     let mut pad = HashSet::new();
 
     'search: for k in 0..0xffffffffffffffff {
-        let mut sum_matrix = h1_matrix.clone();
 
 
-        for (key, mut row) in keys.iter().zip(sum_matrix.rows_mut()) {
-            let index = index(*key, k, n);
-            pad.insert(index);
-            row[index] = row[index] + 1.0;
+        if let Some(pair) = test_large_constant(& keys, &h1_matrix, & remaining, & mut pad, k) {
+            return pair;
         }
-
-        //If each column in the matrix contains at least one non-zero number
-        if remaining.is_subset(&pad) {
-
-
-            let lu = Factorized::from(sum_matrix);
-
-            //If the matrix is invertible
-            if !lu.is_singular() {
-
-                let mut indices: Array1<f64> = Array1::zeros((n));
-
-                for (element, i) in indices.iter_mut().zip(0..n) {
-                    *element = i as f64;
-                }
-
-                //Solve for the lookup table
-                let float_lookup = lu.solve(&indices).unwrap();
-
-                //Make sure the lookup table has all integer values
-                for float in float_lookup.iter() {
-                    if float.floor() != *float {
-                        continue 'search;
-                    }
-                }
-
-                //Convert the float lookup to an int lookup
-                let mut int_lookup = Vec::with_capacity(n);
-
-                for element in float_lookup {
-                    int_lookup.push(element as i64);
-                }
-
-                return (k, int_lookup);
-            }
-
-        }
-
-        pad.clear();
 
 
     }
@@ -233,6 +192,64 @@ fn large_n_scheme(keys: & Vec<u64>) -> (u64, Vec<i64>) {
 
 
 
+}
+
+
+fn test_large_constant(keys: & Vec<u64>,
+                       h1_matrix: & Array2<f64>,
+                       remaining: & HashSet<usize>,
+                       pad: & mut HashSet<usize>,
+                       k: u64) -> Option<(u64, Vec<i64>)> {
+
+    let mut sum_matrix = h1_matrix.clone();
+
+
+    for (key, mut row) in keys.iter().zip(sum_matrix.rows_mut()) {
+        let index = index(*key, k, keys.len());
+        pad.insert(index);
+        row[index] = row[index] + 1.0;
+    }
+
+    //If each column in the matrix contains at least one non-zero number
+    if remaining.is_subset(&pad) {
+
+
+        let lu = Factorized::from(sum_matrix);
+
+        //If the matrix is invertible
+        if !lu.is_singular() {
+
+            let mut indices: Array1<f64> = Array1::zeros((keys.len()));
+
+            for (element, i) in indices.iter_mut().zip(0..keys.len()) {
+                *element = i as f64;
+            }
+
+            //Solve for the lookup table
+            let float_lookup = lu.solve(&indices).unwrap();
+
+            //Make sure the lookup table has all integer values
+            for float in float_lookup.iter() {
+                if float.floor() != *float {
+                    return None;
+                }
+            }
+
+            //Convert the float lookup to an int lookup
+            let mut int_lookup = Vec::with_capacity(keys.len());
+
+            for element in float_lookup {
+                int_lookup.push(element as i64);
+            }
+
+            return Some((k, int_lookup));
+        }
+
+    }
+
+    pad.clear();
+
+    None
 }
 
 
@@ -342,17 +359,21 @@ fn main() {
         unreachable!()
     };
 
-    let (k, lookup) = large_n_scheme(& keys);
-
-    println!("result: {:?}", (k, &lookup));
-
-    println!("verify: {}", verify(&keys, k, &lookup));
-
-    return ;
+    let keys = vec![344576600, 977387140, 736567017, 750102559, 793669679, 180976812, 936548325, 159255278, 444528962, 469558506,
+                    976998485, 10410640, 708017812, 166258333, 197306477, 385043667, 494060610, 253666337, 681385802, 711672338, 360382434,
+                    661859582, 162000099, 20202042, 430426514, 698634907, 426744048, 951459139, 364920394, 310862176, 244887803, 986241892,
+                    761736888, 105099713, 651230198, 210914866, 682374481, 946881439, 549107328, 565566378, 663589581, 847455066, 973914201,
+                    981963763, //863871578, 777572834, 599970191, 70674173, 148977654, 243507551, 187949165, 580250856, 286716355, 411829679,
+                    //508071683, 300160222, 879539974, 40330089, 626428526, 991675137, 860352218, 236648541, 142181725, 312764374, 299087088,
+                    //188786061, 107755593, 148561142, 283197197, 654993089, 259636910, 2749250, 597828595, 588440815, 316183781, 624783789,
+                    //757783105, 2450768, 905297222, 895534810, 209090771, 598799086, 522508384, 405653902, 113145495, 410549427, 346155396,
+                    //406309331, 272908914, 321877857, 461928468, 987654681, 588699194, 851903670, 5727028, 624868323, 503474980, 496294772,
+                    //688668222, 94119093
+    ];
 
     let keys = std::sync::Arc::new(keys);
 
-    /* Make sure the aray doesn't have any duplicates */
+    /* Make sure the array doesn't have any duplicates */
 
     println!("Searching for duplicate keys...");
     {
@@ -368,7 +389,9 @@ fn main() {
         }
     }
 
-    println!("Key set: {:?}", keys);
+    let n = keys.len();
+
+    println!("Key set ({} keys): {:?}", n, keys);
 
     /* Setup and begin concurrent search */
 
@@ -376,6 +399,28 @@ fn main() {
 
     //Divide 2^64 - 1 equally among the threads
     let interval = 0xffffffffffffffff  / thread_count  ;
+
+    let mut h1_matrix: Array2<f64> = Array2::zeros((n, n));
+
+
+    //We use remaining to listt any columns made entirely of zeros. If all these columns remain entirely zero,
+    //the matrix will be singular. This provides an easy(?) test to exclude some singular matrices
+    let mut remaining = HashSet::new();
+
+    for i in 0..n {
+        remaining.insert(i);
+    }
+
+    for (key, mut row) in keys.iter().zip(h1_matrix.rows_mut()) {
+        let ind = index(*key, 0, keys.len());
+
+        remaining.remove(&ind);
+        row[ind] = 1.0;
+    }
+
+    let remaining = std::sync::Arc::new(remaining );
+
+    let h1_matrix = std::sync::Arc::new(h1_matrix);
 
     //Signals used to tell the main thread when to stop
     let (rx, tx) = std::sync::mpsc::channel();
@@ -388,15 +433,25 @@ fn main() {
         let cloned_sender = rx.clone();
 
         let key_ref = keys.clone();
+        let remaining_ref = remaining.clone();
+        let matrix_ref = h1_matrix.clone();
+
 
         thread::spawn(move || {
-            for i  in (t)*interval ..(t+1)*interval  {
-                if test_constant(key_ref.deref(), i) {
+            let mut pad = HashSet::new();
+
+            for i  in (0..interval).map(|x| x * thread_count + t)  {
+                if let Some(pair) = test_large_constant(
+                    key_ref.deref(),
+                    matrix_ref.deref(),
+                    remaining_ref.deref(),
+                    & mut pad,
+                    i) {
 
                     //The only way this send will fail is if the receiver has disconnected. This is not an error since
                     //the main thread can stop (due to a ThreadResult::Found) with worker threads running. This will
                     //eventually result in the worker threads being stopped. So we suppress the warning with ok()
-                    cloned_sender.send(ThreadResult::Found(i)).ok();
+                    cloned_sender.send(ThreadResult::Found(pair)).ok();
                     break;
                 }
             }
@@ -414,12 +469,18 @@ fn main() {
 
     loop {
         match tx.recv().unwrap() {
-            ThreadResult::Found(k) => {
+            ThreadResult::Found((k, lookup)) => {
                 let elapsed = start.elapsed();
                 println!("Found constant: {} (elapsed: {:?})", ansi_term::Colour::Yellow.paint(format!("{:#x}", k)), elapsed);
+                println!("Found lookup: g = {}", ansi_term::Colour::Yellow.paint(format!("{:?}", lookup)));
 
-                let indices: Vec<_> = keys.iter().map(|x| index(*x, k, keys.len())).collect();
-                println!("Indices: {:?}", indices);
+                if verify(& keys, k, & lookup) {
+                    println!("Constant/lookup pair {}", ansi_term::Colour::Green.paint("verified"));
+                } else {
+                    println!("Constant/lookup pair {}", ansi_term::Colour::Red.paint("verification failed"));
+                }
+
+                println!("Calculate index as index = g[h(x) % {}] + g[h(x^{}) % {}]", n, k, n);
 
                 break;
             }
